@@ -671,7 +671,7 @@ export default function App() {
         {tab==="ajustes" && <SettingsTab onLogout={logout} />}
       </main>
       <footer className="max-w-7xl mx-auto p-4 text-xs text-slate-500">
-        Datos en Firestore (nube). Recordá agregar tu dominio de Vercel a “Dominios autorizados” en Firebase Auth.
+        Realizado por Cristian M. Bottino - VERCEL - FIREBASE
       </footer>
     </div>
   );
