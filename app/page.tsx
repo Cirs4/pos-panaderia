@@ -350,7 +350,6 @@ function PanModal({
   const [precio, setPrecio] = useState("");
   const [gramos, setGramos] = useState("");
 
-  if (!open) return null;
   const confirmar = () => {
     if (mode === "precio") {
       const p = parseNumberOrZero(precio);
@@ -362,29 +361,79 @@ function PanModal({
     onClose();
   };
 
+  // ESC para cerrar, ENTER para confirmar
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        confirmar();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // incluir dependencias para que ENTER use valores actuales
+  }, [open, mode, precio, gramos]);
+
+  if (!open) return null;
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center">
-      <div className="bg-white rounded-2xl p-4 w-[92%] max-w-md shadow-xl">
+    <div
+      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center"
+      onClick={onClose} // click en fondo también cierra
+    >
+      <div
+        className="bg-white rounded-2xl p-4 w-[92%] max-w-md shadow-xl"
+        onClick={(e) => e.stopPropagation()} // evitar cerrar al click dentro
+      >
         <h3 className="text-lg font-semibold mb-3">Agregar Pan</h3>
+
         <div className="flex gap-2 mb-3">
-          <button className={`px-3 py-1 rounded ${mode==="precio"?"bg-blue-500 text-white":"bg-gray-200"}`} onClick={()=>setMode("precio")}>Ingresar PRECIO</button>
-          <button className={`px-3 py-1 rounded ${mode==="peso"?"bg-blue-500 text-white":"bg-gray-200"}`} onClick={()=>setMode("peso")}>Ingresar PESO (gramos)</button>
+          <button
+            className={`px-3 py-1 rounded ${mode==="precio"?"bg-blue-500 text-white":"bg-gray-200"}`}
+            onClick={()=>setMode("precio")}
+          >
+            Ingresar PRECIO
+          </button>
+          <button
+            className={`px-3 py-1 rounded ${mode==="peso"?"bg-blue-500 text-white":"bg-gray-200"}`}
+            onClick={()=>setMode("peso")}
+          >
+            Ingresar PESO (gramos)
+          </button>
         </div>
+
         {mode === "precio" ? (
-          <input autoFocus inputMode="numeric" pattern="[0-9]*" placeholder="Precio final (ej: 800)"
-            className="w-full border rounded p-2 mb-3" value={precio}
-            onChange={(e)=>setPrecio(e.target.value.replace(/[^\d.,]/g,""))} />
+          <input
+            autoFocus
+            inputMode="numeric"
+            pattern="[0-9]*"
+            placeholder="Precio final (ej: 800)"
+            className="w-full border rounded p-2 mb-3"
+            value={precio}
+            onChange={(e)=>setPrecio(e.target.value.replace(/[^\d.,]/g,""))}
+          />
         ) : (
           <>
             <p className="text-sm text-slate-600 mb-1">Precio por kilo configurado: ${pricePerKg}/kg</p>
-            <input autoFocus inputMode="numeric" pattern="[0-9]*" placeholder="Gramos (ej: 250 para 1/4 kg)"
-              className="w-full border rounded p-2 mb-3" value={gramos}
-              onChange={(e)=>setGramos(e.target.value.replace(/[^\d]/g,""))} />
+            <input
+              autoFocus
+              inputMode="numeric"
+              pattern="[0-9]*"
+              placeholder="Gramos (ej: 250 para 1/4 kg)"
+              className="w-full border rounded p-2 mb-3"
+              value={gramos}
+              onChange={(e)=>setGramos(e.target.value.replace(/[^\d]/g,""))}
+            />
           </>
         )}
+
         <div className="flex justify-end gap-2">
-          <button className="px-3 py-1 rounded border" onClick={onClose}>Cancelar</button>
-          <button className="px-3 py-1 rounded bg-blue-500 text-white" onClick={confirmar}>Agregar</button>
+          <button className="px-3 py-1 rounded border" onClick={onClose}>Cancelar (Esc)</button>
+          <button className="px-3 py-1 rounded bg-blue-500 text-white" onClick={confirmar}>Agregar (Enter)</button>
         </div>
       </div>
     </div>
