@@ -342,13 +342,19 @@ function StockTab({ products }: { products: Product[] }) {
   );
 }
 
-// ====================== Modal PAN ======================
+// ====================== Modal PAN (con ESC/ENTER robustos) ======================
 function PanModal({
   open, onClose, onAdd, pricePerKg,
-}: { open: boolean; onClose: () => void; onAdd: (priceFinal: number) => void; pricePerKg: number; }) {
-  const [mode, setMode] = useState<"precio"|"peso">("precio");
+}: {
+  open: boolean;
+  onClose: () => void;
+  onAdd: (priceFinal: number) => void;
+  pricePerKg: number;
+}) {
+  const [mode, setMode] = useState<"precio" | "peso">("precio");
   const [precio, setPrecio] = useState("");
   const [gramos, setGramos] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const confirmar = () => {
     if (mode === "precio") {
@@ -361,21 +367,28 @@ function PanModal({
     onClose();
   };
 
-  // ESC para cerrar, ENTER para confirmar
+  // Foco automático al campo activo (cuando abre o cambia el modo)
+  useEffect(() => {
+    if (!open) return;
+    const t = setTimeout(() => inputRef.current?.focus(), 0);
+    return () => clearTimeout(t);
+  }, [open, mode]);
+
+  // ESC / ENTER globales (incluye NumpadEnter y 'Esc')
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      const key = e.key;
+      if (key === "Escape" || key === "Esc") {
         e.preventDefault();
         onClose();
-      } else if (e.key === "Enter") {
+      } else if (key === "Enter" || key === "NumpadEnter") {
         e.preventDefault();
         confirmar();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // incluir dependencias para que ENTER use valores actuales
   }, [open, mode, precio, gramos]);
 
   if (!open) return null;
@@ -383,58 +396,101 @@ function PanModal({
   return (
     <div
       className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center"
-      onClick={onClose} // click en fondo también cierra
+      onClick={onClose} // click afuera cierra
     >
       <div
         className="bg-white rounded-2xl p-4 w-[92%] max-w-md shadow-xl"
-        onClick={(e) => e.stopPropagation()} // evitar cerrar al click dentro
+        onClick={(e) => e.stopPropagation()} // no cerrar al click interno
       >
         <h3 className="text-lg font-semibold mb-3">Agregar Pan</h3>
 
         <div className="flex gap-2 mb-3">
           <button
-            className={`px-3 py-1 rounded ${mode==="precio"?"bg-blue-500 text-white":"bg-gray-200"}`}
-            onClick={()=>setMode("precio")}
+            className={`px-3 py-1 rounded ${mode === "precio" ? "bg-blue-500 text-white" : "bg-gray-200"}`}
+            onClick={() => setMode("precio")}
           >
             Ingresar PRECIO
           </button>
           <button
-            className={`px-3 py-1 rounded ${mode==="peso"?"bg-blue-500 text-white":"bg-gray-200"}`}
-            onClick={()=>setMode("peso")}
+            className={`px-3 py-1 rounded ${mode === "peso" ? "bg-blue-500 text-white" : "bg-gray-200"}`}
+            onClick={() => setMode("peso")}
           >
             Ingresar PESO (gramos)
           </button>
         </div>
 
-        {mode === "precio" ? (
-          <input
-            autoFocus
-            inputMode="numeric"
-            pattern="[0-9]*"
-            placeholder="Precio final (ej: 800)"
-            className="w-full border rounded p-2 mb-3"
-            value={precio}
-            onChange={(e)=>setPrecio(e.target.value.replace(/[^\d.,]/g,""))}
-          />
-        ) : (
-          <>
-            <p className="text-sm text-slate-600 mb-1">Precio por kilo configurado: ${pricePerKg}/kg</p>
+        {/* Form para que ENTER también dispare submit por si el navegador lo requiere */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            confirmar();
+          }}
+        >
+          {mode === "precio" ? (
             <input
+              ref={inputRef}
               autoFocus
               inputMode="numeric"
               pattern="[0-9]*"
-              placeholder="Gramos (ej: 250 para 1/4 kg)"
+              placeholder="Precio final (ej: 800)"
               className="w-full border rounded p-2 mb-3"
-              value={gramos}
-              onChange={(e)=>setGramos(e.target.value.replace(/[^\d]/g,""))}
+              value={precio}
+              onChange={(e) => setPrecio(e.target.value.replace(/[^\d.,]/g, ""))}
+              onKeyDown={(e) => {
+                if (e.key === "Escape" || e.key === "Esc") {
+                  e.preventDefault();
+                  onClose();
+                }
+                if (e.key === "Enter" || e.key === "NumpadEnter") {
+                  e.preventDefault();
+                  confirmar();
+                }
+              }}
             />
-          </>
-        )}
+          ) : (
+            <>
+              <p className="text-sm text-slate-600 mb-1">
+                Precio por kilo configurado: ${pricePerKg}/kg
+              </p>
+              <input
+                ref={inputRef}
+                autoFocus
+                inputMode="numeric"
+                pattern="[0-9]*"
+                placeholder="Gramos (ej: 250 para 1/4 kg)"
+                className="w-full border rounded p-2 mb-3"
+                value={gramos}
+                onChange={(e) => setGramos(e.target.value.replace(/[^\d]/g, ""))}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape" || e.key === "Esc") {
+                    e.preventDefault();
+                    onClose();
+                  }
+                  if (e.key === "Enter" || e.key === "NumpadEnter") {
+                    e.preventDefault();
+                    confirmar();
+                  }
+                }}
+              />
+            </>
+          )}
 
-        <div className="flex justify-end gap-2">
-          <button className="px-3 py-1 rounded border" onClick={onClose}>Cancelar (Esc)</button>
-          <button className="px-3 py-1 rounded bg-blue-500 text-white" onClick={confirmar}>Agregar (Enter)</button>
-        </div>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className="px-3 py-1 rounded border"
+              onClick={onClose}
+            >
+              Cancelar (Esc)
+            </button>
+            <button
+              type="submit"
+              className="px-3 py-1 rounded bg-blue-500 text-white"
+            >
+              Agregar (Enter)
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
