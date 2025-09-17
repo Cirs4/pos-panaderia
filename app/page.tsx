@@ -78,6 +78,13 @@ function todayLocalDateAR() {
 function pmLabel(m?: PaymentMethod) {
   return m === "transfer" ? "TRANSFERENCIA" : "EFECTIVO";
 }
+function isTypingInInput() {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName?.toLowerCase();
+  const editable = (el as any).isContentEditable;
+  return tag === "input" || tag === "textarea" || editable;
+}
 
 // ====================== Hooks ======================
 function useAuthSession() {
@@ -321,7 +328,7 @@ function StockTab({ products }: { products: Product[] }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((p) => (
+              {products.map((p) => (
                 <tr key={p.code} className={`${p.stock <= (p.lowThreshold ?? 999999) ? "bg-red-50" : ""} border-b`}>
                   <td className="py-2">{p.name}</td>
                   <td className="py-2 font-mono">{p.code}</td>
@@ -344,7 +351,7 @@ function StockTab({ products }: { products: Product[] }) {
                   </td>
                 </tr>
               ))}
-              {filtered.length === 0 && (
+              {products.length === 0 && (
                 <tr><td colSpan={7} className="text-center text-slate-500 py-6">Sin resultados</td></tr>
               )}
             </tbody>
@@ -472,6 +479,48 @@ function PaymentModal({
   );
 }
 
+// ====================== Banner de Atajos + Modal Ayuda ======================
+function ShortcutsBanner({ visible, onOpenHelp }: { visible: boolean; onOpenHelp: () => void }) {
+  if (!visible) return null;
+  return (
+    <div role="region" aria-label="Atajos de teclado" className="w-full bg-sky-50 border-b border-sky-200">
+      <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between">
+        <div className="text-[13px] md:text-sm font-bold text-sky-900">
+          Num0: Pan · NumEnter: Cobrar · Num.: Código · Num+: +1 último · Num/: Cancelar
+        </div>
+        <button
+          aria-label="Ayuda de atajos"
+          className="ml-3 px-2 py-1 rounded border border-sky-300 text-sky-900 text-sm font-semibold bg-white hover:bg-sky-100"
+          onClick={onOpenHelp}
+        >
+          ?
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ShortcutsHelpModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-5 w-[92%] max-w-lg shadow-xl" onClick={(e)=>e.stopPropagation()}>
+        <h3 className="text-lg font-semibold mb-3">Atajos de teclado (Numpad)</h3>
+        <ul className="list-disc pl-5 space-y-1 text-sm">
+          <li><strong>Num0</strong>: abrir <strong>Pan</strong></li>
+          <li><strong>NumEnter</strong>: <strong>Cobrar</strong></li>
+          <li><strong>Num .</strong>: enfocar <strong>código/buscador</strong></li>
+          <li><strong>Num +</strong>: sumar <strong>+1</strong> a la última línea agregada</li>
+          <li><strong>Num /</strong>: <strong>Cancelar</strong> (vaciar carrito)</li>
+        </ul>
+        <div className="flex justify-end gap-2 mt-4">
+          <button className="px-3 py-1 rounded border" onClick={onClose}>Cerrar (Esc)</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ====================== POS ======================
 function POSTab({
   products, onSaleRecorded, pricePerKg,
@@ -550,19 +599,36 @@ function POSTab({
     }
   };
 
+  // +1 al último item del carrito (índice 0), respetando stock si no es PAN
+  const incLastItem = () => {
+    setCart((prev) => {
+      if (prev.length === 0) return prev;
+      const last = prev[0];
+      if (last.code !== "PAN") {
+        const prod = productsMap.get(last.code);
+        const max = prod?.stock ?? 0;
+        if (last.qty + 1 > max) {
+          toast.error(`Stock insuficiente de ${last.name}`);
+          return prev;
+        }
+      }
+      const next = [...prev];
+      next[0] = { ...last, qty: last.qty + 1 };
+      return next;
+    });
+  };
+
   // --- Cobro final (con medio de pago) ---
   const finalizarCobro = async (paymentMethod: PaymentMethod) => {
     if (cart.length === 0) { toast.error("No hay productos"); return; }
     try {
       await runTransaction(db, async (tx) => {
-        // Leer todo primero (excluye PAN)
         const indexed = cart.map((it) => ({
           item: it,
           ref: it.code !== "PAN" ? doc(db, "products", it.code) : null,
         }));
         const snaps = await Promise.all(indexed.map(({ ref }) => (ref ? tx.get(ref) : Promise.resolve(null))));
 
-        // Validar y preparar items con costAtSale
         const itemsForSale: SaleItem[] = indexed.map(({ item }, i) => {
           if (item.code === "PAN") return { ...item, costAtSale: 0 };
           const snap = snaps[i]!;
@@ -572,7 +638,6 @@ function POSTab({
           return { ...item, costAtSale: Number(p.cost || 0) };
         });
 
-        // Actualizar stocks
         indexed.forEach(({ item }, i) => {
           if (item.code !== "PAN") {
             const snap = snaps[i]!;
@@ -581,7 +646,6 @@ function POSTab({
           }
         });
 
-        // Crear venta
         const saleRef = doc(collection(db, "sales"));
         const userEmail = auth.currentUser?.email ?? "desconocido";
         const total = cart.reduce((acc, i) => acc + i.price * i.qty, 0);
@@ -590,7 +654,7 @@ function POSTab({
           at: serverTimestamp(),
           localDate: todayLocalDateAR(),
           user: userEmail,
-          paymentMethod, // <- guardamos el medio de pago
+          paymentMethod,
           items: itemsForSale.map(i => ({
             code: i.code, name: i.name, qty: i.qty, price: i.price, costAtSale: i.costAtSale ?? 0,
           })),
@@ -618,6 +682,41 @@ function POSTab({
       toast.error(err?.message || "No se pudo registrar la venta");
     }
   };
+
+  // ------- ATAJOS NUMPAD (SOLO EN POS) -------
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // ignorar si se está escribiendo
+      if (isTypingInInput()) return;
+      // ignorar si hay modales del POS (Pan/Payment) abiertos
+      if (showPan || showPayment) return;
+
+      switch (e.code) {
+        case "Numpad0":
+          e.preventDefault();
+          setShowPan(true);
+          break;
+        case "NumpadEnter":
+          e.preventDefault();
+          if (cart.length > 0) setShowPayment(true);
+          break;
+        case "NumpadDecimal":
+          e.preventDefault();
+          inputRef.current?.focus();
+          break;
+        case "NumpadAdd":
+          e.preventDefault();
+          incLastItem();
+          break;
+        case "NumpadDivide":
+          e.preventDefault();
+          cancelAll();
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cart.length, showPan, showPayment]);
 
   return (
     <div className="grid xl:grid-cols-3 gap-6">
@@ -656,8 +755,8 @@ function POSTab({
               </tr>
             </thead>
             <tbody>
-              {cart.map((i) => (
-                <tr key={`${i.code}-${i.name}-${i.price}`} className="border-b">
+              {cart.map((i, idx) => (
+                <tr key={`${i.code}-${i.name}-${idx}`} className="border-b">
                   <td className="py-2">
                     <div className="flex flex-col">
                       <span>{i.name}</span>
@@ -676,7 +775,7 @@ function POSTab({
                           const prod = productsMap.get(i.code);
                           if (prod && val > (prod.stock || 0)) { toast.error(`Stock insuficiente de ${prod.name}`); return; }
                         }
-                        setCart(prev => prev.map(x => x===i ? { ...x, qty: val } : x));
+                        setCart(prev => prev.map((x, j) => j===idx ? { ...x, qty: val } : x));
                       }} />
                   </td>
                   <td className="py-2 text-right">{peso(i.price * i.qty)}</td>
@@ -786,8 +885,8 @@ function HistoryTab({ sales }: { sales: Sale[] }) {
                   <td className="py-2 whitespace-nowrap">{fmtDateTime(s.at)}</td>
                   <td className="py-2">
                     <ul className="list-disc pl-5 text-sm text-slate-700">
-                      {s.items.map((i) => (
-                        <li key={`${s.id}-${i.code}-${i.name}`}>{i.name} x{i.qty} — {peso(i.price)} c/u = {peso(i.price*i.qty)}</li>
+                      {s.items.map((i, idx) => (
+                        <li key={`${s.id}-${i.code}-${idx}`}>{i.name} x{i.qty} — {peso(i.price)} c/u = {peso(i.price*i.qty)}</li>
                       ))}
                     </ul>
                   </td>
@@ -895,7 +994,15 @@ function BalanceTab() {
 }
 
 // ====================== AJUSTES ======================
-function SettingsTab({ onLogout }: { onLogout: () => void }) {
+function SettingsTab({
+  onLogout,
+  showShortcuts,
+  onToggleShortcuts,
+}: {
+  onLogout: () => void;
+  showShortcuts: boolean;
+  onToggleShortcuts: (v: boolean) => void;
+}) {
   const [low, setLow] = useState<number>(5);
   const [lowProducts, setLowProducts] = useState<Product[]>([]);
   const [panPricePerKg, setPanPricePerKg] = useState<number>(0);
@@ -936,7 +1043,7 @@ function SettingsTab({ onLogout }: { onLogout: () => void }) {
     <div className="space-y-6">
       <div className="bg-white rounded-2xl border p-4 shadow-sm">
         <h2 className="text-lg font-semibold mb-1">Configuración</h2>
-        <div className="grid sm:grid-cols-2 gap-3 items-end">
+        <div className="grid sm:grid-cols-3 gap-3 items-end">
           <div>
             <label className="text-sm">Umbral de stock bajo (global)</label>
             <input type="number" className="w-full border rounded-lg p-2 mt-1" value={low} onChange={(e)=>setLow(Number(e.target.value||0))} />
@@ -945,8 +1052,15 @@ function SettingsTab({ onLogout }: { onLogout: () => void }) {
             <label className="text-sm">Precio por kilo de pan (ARS)</label>
             <input type="number" className="w-full border rounded-lg p-2 mt-1" value={panPricePerKg} onChange={(e)=>setPanPricePerKg(Number(e.target.value||0))} />
           </div>
-          <div className="flex gap-2">
-            <button onClick={save} disabled={saving} className="bg-black text-white rounded-lg px-4 py-2 disabled:opacity-60">{saving ? "Guardando..." : "Guardar"}</button>
+          <div className="flex gap-2 items-center">
+            <label className="text-sm mr-2">Mostrar atajos</label>
+            <input
+              type="checkbox"
+              className="w-5 h-5"
+              checked={showShortcuts}
+              onChange={(e)=>onToggleShortcuts(e.target.checked)}
+            />
+            <button onClick={save} disabled={saving} className="ml-auto bg-black text-white rounded-lg px-4 py-2 disabled:opacity-60">{saving ? "Guardando..." : "Guardar"}</button>
             <button onClick={onLogout} className="border rounded-lg px-4 py-2">Cerrar sesión</button>
           </div>
         </div>
@@ -1005,6 +1119,26 @@ export default function App() {
     return () => unsub();
   }, []);
 
+  // ---------- Preferencia por usuaria: Mostrar atajos ----------
+  const [showShortcuts, setShowShortcuts] = useState<boolean>(true);
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    const ref = doc(db, "userPrefs", user.uid);
+    const unsub = onSnapshot(ref, (snap) => {
+      const data = snap.data() as any;
+      if (data?.showShortcuts != null) setShowShortcuts(!!data.showShortcuts);
+    });
+    return () => unsub();
+  }, [user?.uid]);
+
+  const toggleShortcuts = async (v: boolean) => {
+    setShowShortcuts(v);
+    if (!user?.uid) return;
+    await setDoc(doc(db, "userPrefs", user.uid), { showShortcuts: v }, { merge: true });
+  };
+
   const logout = async () => { await signOut(auth); };
 
   if (!ready) return <div className="min-h-screen grid place-items-center text-slate-500">Cargando…</div>;
@@ -1022,6 +1156,9 @@ export default function App() {
           </motion.h1>
           <div className="text-sm text-slate-600">Sesión: <strong>{email}</strong></div>
         </div>
+
+        {/* Banner de atajos (visible en todas las pestañas si la usuaria lo activó) */}
+        <ShortcutsBanner visible={showShortcuts} onOpenHelp={()=>setHelpOpen(true)} />
       </header>
 
       <main className="max-w-7xl mx-auto p-4 space-y-6">
@@ -1040,13 +1177,16 @@ export default function App() {
         {tab==="stock" && <StockTab products={products} />}
         {tab==="pos" && <POSTab products={products} onSaleRecorded={onSaleRecorded} pricePerKg={panPricePerKg} />}
         {tab==="historial" && <HistoryTab sales={sales} />}
-        {tab==="ajustes" && <SettingsTab onLogout={logout} />}
+        {tab==="ajustes" && <SettingsTab onLogout={logout} showShortcuts={showShortcuts} onToggleShortcuts={toggleShortcuts} />}
         {tab==="balance" && canSeeBalance && <BalanceTab />}
       </main>
 
       <footer className="max-w-7xl mx-auto p-4 text-xs text-slate-500">
         Realizado por Cristian M. Bottino - VERCEL - FIREBASE
       </footer>
+
+      {/* Modal de ayuda de atajos */}
+      <ShortcutsHelpModal open={helpOpen} onClose={()=>setHelpOpen(false)} />
     </div>
   );
 }
