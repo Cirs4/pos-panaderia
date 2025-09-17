@@ -35,7 +35,16 @@ type Product = {
 };
 
 type SaleItem = { code: string; name: string; qty: number; price: number; costAtSale?: number };
-type Sale = { id: string; at: string; items: SaleItem[]; total: number; user?: string; localDate?: string };
+type PaymentMethod = "cash" | "transfer";
+type Sale = {
+  id: string;
+  at: string;
+  items: SaleItem[];
+  total: number;
+  user?: string;
+  localDate?: string;
+  paymentMethod?: PaymentMethod;
+};
 
 // ====================== Utils ======================
 const AR_TZ = "America/Argentina/Buenos_Aires";
@@ -65,6 +74,9 @@ function todayLocalDateAR() {
   const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: AR_TZ, year: "numeric", month: "2-digit", day: "2-digit" });
   const [y, m, d] = fmt.format(now).split("-");
   return `${y}-${m}-${d}`; // YYYY-MM-DD
+}
+function pmLabel(m?: PaymentMethod) {
+  return m === "transfer" ? "TRANSFERENCIA" : "EFECTIVO";
 }
 
 // ====================== Hooks ======================
@@ -108,6 +120,7 @@ function useSales() {
           total: data.total || 0,
           user: data.user,
           localDate: data.localDate,
+          paymentMethod: data.paymentMethod as PaymentMethod | undefined,
         });
       });
       setSales(arr);
@@ -342,19 +355,13 @@ function StockTab({ products }: { products: Product[] }) {
   );
 }
 
-// ====================== Modal PAN (con ESC/ENTER robustos) ======================
+// ====================== Modal PAN ======================
 function PanModal({
   open, onClose, onAdd, pricePerKg,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onAdd: (priceFinal: number) => void;
-  pricePerKg: number;
-}) {
-  const [mode, setMode] = useState<"precio" | "peso">("precio");
+}: { open: boolean; onClose: () => void; onAdd: (priceFinal: number) => void; pricePerKg: number; }) {
+  const [mode, setMode] = useState<"precio"|"peso">("precio");
   const [precio, setPrecio] = useState("");
   const [gramos, setGramos] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const confirmar = () => {
     if (mode === "precio") {
@@ -367,25 +374,11 @@ function PanModal({
     onClose();
   };
 
-  // Foco automático al campo activo (cuando abre o cambia el modo)
-  useEffect(() => {
-    if (!open) return;
-    const t = setTimeout(() => inputRef.current?.focus(), 0);
-    return () => clearTimeout(t);
-  }, [open, mode]);
-
-  // ESC / ENTER globales (incluye NumpadEnter y 'Esc')
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      const key = e.key;
-      if (key === "Escape" || key === "Esc") {
-        e.preventDefault();
-        onClose();
-      } else if (key === "Enter" || key === "NumpadEnter") {
-        e.preventDefault();
-        confirmar();
-      }
+      if (e.key === "Escape" || e.key === "Esc") { e.preventDefault(); onClose(); }
+      else if (e.key === "Enter" || e.key === "NumpadEnter") { e.preventDefault(); confirmar(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -394,103 +387,86 @@ function PanModal({
   if (!open) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center"
-      onClick={onClose} // click afuera cierra
-    >
-      <div
-        className="bg-white rounded-2xl p-4 w-[92%] max-w-md shadow-xl"
-        onClick={(e) => e.stopPropagation()} // no cerrar al click interno
-      >
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-4 w-[92%] max-w-md shadow-xl" onClick={(e)=>e.stopPropagation()}>
         <h3 className="text-lg font-semibold mb-3">Agregar Pan</h3>
-
         <div className="flex gap-2 mb-3">
-          <button
-            className={`px-3 py-1 rounded ${mode === "precio" ? "bg-blue-500 text-white" : "bg-gray-200"}`}
-            onClick={() => setMode("precio")}
-          >
-            Ingresar PRECIO
-          </button>
-          <button
-            className={`px-3 py-1 rounded ${mode === "peso" ? "bg-blue-500 text-white" : "bg-gray-200"}`}
-            onClick={() => setMode("peso")}
-          >
-            Ingresar PESO (gramos)
-          </button>
+          <button className={`px-3 py-1 rounded ${mode==="precio"?"bg-blue-500 text-white":"bg-gray-200"}`} onClick={()=>setMode("precio")}>Ingresar PRECIO</button>
+          <button className={`px-3 py-1 rounded ${mode==="peso"?"bg-blue-500 text-white":"bg-gray-200"}`} onClick={()=>setMode("peso")}>Ingresar PESO (gramos)</button>
         </div>
+        {mode === "precio" ? (
+          <input autoFocus inputMode="numeric" pattern="[0-9]*" placeholder="Precio final (ej: 800)"
+            className="w-full border rounded p-2 mb-3" value={precio}
+            onChange={(e)=>setPrecio(e.target.value.replace(/[^\d.,]/g,""))} />
+        ) : (
+          <>
+            <p className="text-sm text-slate-600 mb-1">Precio por kilo configurado: ${pricePerKg}/kg</p>
+            <input autoFocus inputMode="numeric" pattern="[0-9]*" placeholder="Gramos (ej: 250 para 1/4 kg)"
+              className="w-full border rounded p-2 mb-3" value={gramos}
+              onChange={(e)=>setGramos(e.target.value.replace(/[^\d]/g,""))} />
+          </>
+        )}
+        <div className="flex justify-end gap-2">
+          <button className="px-3 py-1 rounded border" onClick={onClose}>Cancelar (Esc)</button>
+          <button className="px-3 py-1 rounded bg-blue-500 text-white" onClick={confirmar}>Agregar (Enter)</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
-        {/* Form para que ENTER también dispare submit por si el navegador lo requiere */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            confirmar();
-          }}
-        >
-          {mode === "precio" ? (
-            <input
-              ref={inputRef}
-              autoFocus
-              inputMode="numeric"
-              pattern="[0-9]*"
-              placeholder="Precio final (ej: 800)"
-              className="w-full border rounded p-2 mb-3"
-              value={precio}
-              onChange={(e) => setPrecio(e.target.value.replace(/[^\d.,]/g, ""))}
-              onKeyDown={(e) => {
-                if (e.key === "Escape" || e.key === "Esc") {
-                  e.preventDefault();
-                  onClose();
-                }
-                if (e.key === "Enter" || e.key === "NumpadEnter") {
-                  e.preventDefault();
-                  confirmar();
-                }
-              }}
-            />
-          ) : (
-            <>
-              <p className="text-sm text-slate-600 mb-1">
-                Precio por kilo configurado: ${pricePerKg}/kg
-              </p>
-              <input
-                ref={inputRef}
-                autoFocus
-                inputMode="numeric"
-                pattern="[0-9]*"
-                placeholder="Gramos (ej: 250 para 1/4 kg)"
-                className="w-full border rounded p-2 mb-3"
-                value={gramos}
-                onChange={(e) => setGramos(e.target.value.replace(/[^\d]/g, ""))}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape" || e.key === "Esc") {
-                    e.preventDefault();
-                    onClose();
-                  }
-                  if (e.key === "Enter" || e.key === "NumpadEnter") {
-                    e.preventDefault();
-                    confirmar();
-                  }
-                }}
-              />
-            </>
-          )}
+// ====================== Modal MEDIO DE PAGO ======================
+function PaymentModal({
+  open,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: (method: PaymentMethod) => void;
+}) {
+  const options: { key: PaymentMethod; label: string; hint: string }[] = [
+    { key: "cash", label: "Efectivo", hint: "Cobro en mano" },
+    { key: "transfer", label: "Transferencia", hint: "CBU/Alias/QR" },
+  ];
+  const [index, setIndex] = useState(0);
 
-          <div className="flex justify-end gap-2">
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" || e.key === "Esc") { e.preventDefault(); onClose(); return; }
+      if (["ArrowLeft","ArrowUp"].includes(e.key)) { e.preventDefault(); setIndex((i)=> (i+options.length-1)%options.length); }
+      if (["ArrowRight","ArrowDown"].includes(e.key)) { e.preventDefault(); setIndex((i)=> (i+1)%options.length); }
+      if (e.key === "Enter" || e.key === "NumpadEnter") { e.preventDefault(); onConfirm(options[index].key); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, index]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-4 w-[92%] max-w-md shadow-xl" onClick={(e)=>e.stopPropagation()}>
+        <h3 className="text-lg font-semibold mb-4">Seleccioná el medio de pago</h3>
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          {options.map((opt, i) => (
             <button
-              type="button"
-              className="px-3 py-1 rounded border"
-              onClick={onClose}
+              key={opt.key}
+              className={`border rounded-xl p-4 text-left ${i===index ? "border-black ring-2 ring-black" : "hover:border-slate-400"}`}
+              onClick={()=>setIndex(i)}
+              onDoubleClick={()=>onConfirm(opt.key)}
             >
-              Cancelar (Esc)
+              <div className="text-base font-semibold">{opt.label}</div>
+              <div className="text-xs text-slate-500">{opt.hint}</div>
+              {i===index && <div className="text-[10px] text-slate-500 mt-2">Enter para confirmar</div>}
             </button>
-            <button
-              type="submit"
-              className="px-3 py-1 rounded bg-blue-500 text-white"
-            >
-              Agregar (Enter)
-            </button>
-          </div>
-        </form>
+          ))}
+        </div>
+        <div className="flex justify-end gap-2">
+          <button className="px-3 py-1 rounded border" onClick={onClose}>Cancelar (Esc)</button>
+          <button className="px-3 py-1 rounded bg-black text-white" onClick={()=>onConfirm(options[index].key)}>Confirmar (Enter)</button>
+        </div>
       </div>
     </div>
   );
@@ -504,6 +480,7 @@ function POSTab({
   const [cart, setCart] = useState<SaleItem[]>([]);
   const [undoStack, setUndoStack] = useState<any[]>([]);
   const [showPan, setShowPan] = useState(false);
+  const [showPayment, setShowPayment] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -573,19 +550,19 @@ function POSTab({
     }
   };
 
-  const cobrar = async () => {
+  // --- Cobro final (con medio de pago) ---
+  const finalizarCobro = async (paymentMethod: PaymentMethod) => {
     if (cart.length === 0) { toast.error("No hay productos"); return; }
-
     try {
       await runTransaction(db, async (tx) => {
-        // 1) Preparar refs y LEER TODO primero (excluyendo PAN)
+        // Leer todo primero (excluye PAN)
         const indexed = cart.map((it) => ({
           item: it,
           ref: it.code !== "PAN" ? doc(db, "products", it.code) : null,
         }));
         const snaps = await Promise.all(indexed.map(({ ref }) => (ref ? tx.get(ref) : Promise.resolve(null))));
 
-        // 2) Validar y armar items con costAtSale
+        // Validar y preparar items con costAtSale
         const itemsForSale: SaleItem[] = indexed.map(({ item }, i) => {
           if (item.code === "PAN") return { ...item, costAtSale: 0 };
           const snap = snaps[i]!;
@@ -595,7 +572,7 @@ function POSTab({
           return { ...item, costAtSale: Number(p.cost || 0) };
         });
 
-        // 3) ESCRIBIR: actualizar stocks (solo no-PAN)
+        // Actualizar stocks
         indexed.forEach(({ item }, i) => {
           if (item.code !== "PAN") {
             const snap = snaps[i]!;
@@ -604,13 +581,16 @@ function POSTab({
           }
         });
 
-        // 4) ESCRIBIR: crear venta
+        // Crear venta
         const saleRef = doc(collection(db, "sales"));
         const userEmail = auth.currentUser?.email ?? "desconocido";
+        const total = cart.reduce((acc, i) => acc + i.price * i.qty, 0);
+
         tx.set(saleRef, {
           at: serverTimestamp(),
           localDate: todayLocalDateAR(),
           user: userEmail,
+          paymentMethod, // <- guardamos el medio de pago
           items: itemsForSale.map(i => ({
             code: i.code, name: i.name, qty: i.qty, price: i.price, costAtSale: i.costAtSale ?? 0,
           })),
@@ -625,12 +605,14 @@ function POSTab({
         total,
         user: auth.currentUser?.email ?? "desconocido",
         localDate: todayLocalDateAR(),
+        paymentMethod,
       };
 
       toast.success("Venta registrada");
       onSaleRecorded(sale);
       setCart([]);
       setUndoStack([]);
+      setShowPayment(false);
       inputRef.current?.focus();
     } catch (err: any) {
       toast.error(err?.message || "No se pudo registrar la venta");
@@ -719,7 +701,13 @@ function POSTab({
         <div className="grid grid-cols-2 gap-2">
           <button className="border rounded-lg py-2" onClick={undo}>Atrás</button>
           <button className="border rounded-lg py-2" onClick={cancelAll}>Cancelar</button>
-          <button className="col-span-2 bg-black text-white rounded-lg py-2" onClick={cobrar}>Cobrar</button>
+          <button
+            className="col-span-2 bg-black text-white rounded-lg py-2 disabled:opacity-60"
+            disabled={cart.length === 0}
+            onClick={()=> setShowPayment(true)}
+          >
+            Cobrar
+          </button>
         </div>
       </div>
 
@@ -732,6 +720,13 @@ function POSTab({
           setCart(prev => [{ code:"PAN", name:"Pan", price: precioFinal, qty: 1 }, ...prev]);
         }}
       />
+
+      {/* Modal MEDIO DE PAGO */}
+      <PaymentModal
+        open={showPayment}
+        onClose={()=>setShowPayment(false)}
+        onConfirm={(method)=>finalizarCobro(method)}
+      />
     </div>
   );
 }
@@ -742,13 +737,21 @@ function HistoryTab({ sales }: { sales: Sale[] }) {
   const filtered = useMemo(() => {
     const t = q.trim().toLowerCase();
     if (!t) return sales;
-    return sales.filter((s) => s.items.some((i) => i.name.toLowerCase().includes(t) || i.code.includes(t)) || fmtDateTime(s.at).includes(t));
+    return sales.filter((s) =>
+      s.items.some((i) => i.name.toLowerCase().includes(t) || i.code.includes(t)) ||
+      fmtDateTime(s.at).includes(t) ||
+      pmLabel(s.paymentMethod).toLowerCase().includes(t)
+    );
   }, [q, sales]);
 
   const exportCSV = () => {
     const rows = [
-      ["fecha_hora","codigo","producto","cantidad","precio_unit","subtotal","total_venta","id_venta"],
-      ...sales.flatMap((s) => s.items.map((i) => [fmtDateTime(s.at), i.code, i.name, i.qty, i.price, i.price*i.qty, s.total, s.id]))
+      ["fecha_hora","pago","codigo","producto","cantidad","precio_unit","subtotal","total_venta","id_venta"],
+      ...sales.flatMap((s) => s.items.map((i) => [
+        fmtDateTime(s.at),
+        pmLabel(s.paymentMethod),
+        i.code, i.name, i.qty, i.price, i.price*i.qty, s.total, s.id
+      ]))
     ];
     const csv = rows.map(r => r.map(v => typeof v === "string" && v.includes(",") ? `"${v.replace(/"/g,'""')}"` : v).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -761,7 +764,7 @@ function HistoryTab({ sales }: { sales: Sale[] }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <input className="border rounded-lg p-2 flex-1" placeholder="Buscar por producto, código o fecha" value={q} onChange={(e)=>setQ(e.target.value)} />
+        <input className="border rounded-lg p-2 flex-1" placeholder="Buscar por producto, código, fecha o pago" value={q} onChange={(e)=>setQ(e.target.value)} />
         <button className="border rounded-lg px-4 py-2" onClick={exportCSV}>Exportar CSV</button>
       </div>
       <div className="bg-white rounded-2xl border p-4 shadow-sm">
@@ -773,6 +776,7 @@ function HistoryTab({ sales }: { sales: Sale[] }) {
               <tr className="text-left border-b">
                 <th className="py-2">Fecha</th>
                 <th className="py-2">Detalle</th>
+                <th className="py-2">Pago</th>
                 <th className="py-2 text-right">Total</th>
               </tr>
             </thead>
@@ -787,11 +791,16 @@ function HistoryTab({ sales }: { sales: Sale[] }) {
                       ))}
                     </ul>
                   </td>
+                  <td className="py-2">
+                    <span className={`px-2 py-0.5 rounded text-xs ${s.paymentMethod==="transfer" ? "bg-blue-100 text-blue-700" : "bg-emerald-100 text-emerald-700"}`}>
+                      {pmLabel(s.paymentMethod)}
+                    </span>
+                  </td>
                   <td className="py-2 text-right font-semibold">{peso(s.total)}</td>
                 </tr>
               ))}
               {filtered.length === 0 && (
-                <tr><td colSpan={3} className="text-center text-slate-500 py-6">Sin ventas registradas</td></tr>
+                <tr><td colSpan={4} className="text-center text-slate-500 py-6">Sin ventas registradas</td></tr>
               )}
             </tbody>
           </table>
@@ -801,9 +810,11 @@ function HistoryTab({ sales }: { sales: Sale[] }) {
   );
 }
 
-// ====================== BALANCE (solo clau) ======================
+// ====================== BALANCE (filtro por método) ======================
 function BalanceTab() {
   const [sales, setSales] = useState<Sale[]>([]);
+  const [filter, setFilter] = useState<"all" | PaymentMethod>("all");
+
   useEffect(() => {
     (async () => {
       const qy = query(collection(db, "sales"), orderBy("localDate", "desc"));
@@ -813,9 +824,14 @@ function BalanceTab() {
     })();
   }, []);
 
+  const filteredSales = useMemo(() => {
+    if (filter === "all") return sales;
+    return sales.filter(s => (s.paymentMethod ?? "cash") === filter);
+  }, [sales, filter]);
+
   const grouped = useMemo(() => {
     const map = new Map<string, { cost: number; profit: number; total: number }>();
-    for (const s of sales) {
+    for (const s of filteredSales) {
       const key = s.localDate ?? todayLocalDateAR();
       let acc = map.get(key);
       if (!acc) { acc = { cost: 0, profit: 0, total: 0 }; map.set(key, acc); }
@@ -833,35 +849,46 @@ function BalanceTab() {
       acc.total += dayTotal;
     }
     return Array.from(map.entries()).sort((a,b)=> (a[0] < b[0] ? 1 : -1));
-  }, [sales]);
+  }, [filteredSales]);
 
   return (
-    <div className="bg-white rounded-2xl border p-4 shadow-sm">
-      <h2 className="text-lg font-semibold mb-3">Balance por día</h2>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[640px] text-sm">
-          <thead>
-            <tr className="text-left border-b bg-gray-50">
-              <th className="py-2">Fecha</th>
-              <th className="py-2 text-right">Coste (ARS)</th>
-              <th className="py-2 text-right">Ganancia (ARS)</th>
-              <th className="py-2 text-right">Ventas (ARS)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {grouped.map(([d, v]) => (
-              <tr key={d} className="border-b">
-                <td className="py-2">{d}</td>
-                <td className="py-2 text-right">{peso(v.cost)}</td>
-                <td className="py-2 text-right">{peso(v.profit)}</td>
-                <td className="py-2 text-right">{peso(v.total)}</td>
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-slate-600">Filtrar por pago:</span>
+        <div className="flex gap-2">
+          <button className={`px-3 py-1 rounded border ${filter==="all"?"bg-black text-white":""}`} onClick={()=>setFilter("all")}>TODO</button>
+          <button className={`px-3 py-1 rounded border ${filter==="cash"?"bg-black text-white":""}`} onClick={()=>setFilter("cash")}>Efectivo</button>
+          <button className={`px-3 py-1 rounded border ${filter==="transfer"?"bg-black text-white":""}`} onClick={()=>setFilter("transfer")}>Transferencia</button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border p-4 shadow-sm">
+        <h2 className="text-lg font-semibold mb-3">Balance por día</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
+            <thead>
+              <tr className="text-left border-b bg-gray-50">
+                <th className="py-2">Fecha</th>
+                <th className="py-2 text-right">Coste (ARS)</th>
+                <th className="py-2 text-right">Ganancia (ARS)</th>
+                <th className="py-2 text-right">Ventas (ARS)</th>
               </tr>
-            ))}
-            {grouped.length === 0 && (
-              <tr><td colSpan={4} className="text-center text-slate-500 py-6">Sin ventas registradas</td></tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {grouped.map(([d, v]) => (
+                <tr key={d} className="border-b">
+                  <td className="py-2">{d}</td>
+                  <td className="py-2 text-right">{peso(v.cost)}</td>
+                  <td className="py-2 text-right">{peso(v.profit)}</td>
+                  <td className="py-2 text-right">{peso(v.total)}</td>
+                </tr>
+              ))}
+              {grouped.length === 0 && (
+                <tr><td colSpan={4} className="text-center text-slate-500 py-6">Sin ventas registradas</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -1006,7 +1033,7 @@ export default function App() {
           {canSeeBalance ? (
             <button className={`rounded-lg py-2 border ${tab==="balance"?"bg-black text-white":""}`} onClick={()=>setTab("balance")}>Balance</button>
           ) : (
-            <div /> // espacio vacío para mantener layout
+            <div /> // espacio para mantener layout
           )}
         </div>
 
