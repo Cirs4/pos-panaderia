@@ -486,7 +486,7 @@ function ShortcutsBanner({ visible, onOpenHelp }: { visible: boolean; onOpenHelp
     <div role="region" aria-label="Atajos de teclado" className="w-full bg-sky-50 border-b border-sky-200">
       <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between">
         <div className="text-[13px] md:text-sm font-bold text-sky-900">
-          Num0: Pan · NumEnter: Cobrar · Num.: Código · Num+: +1 último · Num/: Cancelar
+          0: Pan  ·  Intro: Cobrar  ·  ° : Código  ·  +: +1 último  ·  /: Cancelar
         </div>
         <button
           aria-label="Ayuda de atajos"
